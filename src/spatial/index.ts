@@ -4,9 +4,24 @@ import { radiusToBoundingBox } from './bounds.js';
 import { haversineDistance } from './distance.js';
 
 /**
- * Spatial index wrapper around rbush for efficient geographic queries
+ * Common interface for spatial indexes
  */
-export class SpatialIndex<T extends GeoPoint> {
+export interface ISpatialIndex<T extends GeoPoint> {
+  load(items: T[]): void;
+  add(item: T): void;
+  addMany(items: T[]): void;
+  remove(item: T): boolean;
+  clear(): void;
+  readonly size: number;
+  all(): T[];
+  searchBounds(bounds: BoundingBox): T[];
+  searchRadius(center: GeoPoint, radiusKm: number): Array<{ item: T; distance: number }>;
+}
+
+/**
+ * Dynamic spatial index using RBush for datasets that change after initialization
+ */
+export class SpatialIndex<T extends GeoPoint> implements ISpatialIndex<T> {
   private tree: RBush<IndexedItem<T>>;
   private itemToIndexed: WeakMap<T, IndexedItem<T>>;
 
@@ -147,3 +162,4 @@ export class SpatialIndex<T extends GeoPoint> {
 
 export { haversineDistance } from './distance.js';
 export { radiusToBoundingBox, isPointInBounds, kmToLatDegrees, kmToLngDegrees } from './bounds.js';
+export { StaticSpatialIndex } from './StaticSpatialIndex.js';

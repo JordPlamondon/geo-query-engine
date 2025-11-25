@@ -309,6 +309,181 @@ describe('GeoSearch', () => {
   });
 });
 
+describe('static mode', () => {
+  it('should create instance in static mode', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    expect(staticSearch.staticMode).toBe(true);
+    expect(staticSearch.size).toBe(5);
+  });
+
+  it('should find items within radius in static mode', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    const results = staticSearch.near(CALGARY_CENTER, 5).execute();
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]).toHaveProperty('distance');
+  });
+
+  it('should find items within bounds in static mode', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    const results = staticSearch
+      .withinBounds({
+        minLat: 51.03,
+        maxLat: 51.06,
+        minLng: -114.13,
+        maxLng: -114.06,
+      })
+      .execute();
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it('should throw error when adding to static index', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    const newGym: TestLocation = {
+      id: '6',
+      name: 'New Gym',
+      lat: 51.05,
+      lng: -114.07,
+      rating: 4.0,
+      tags: ['new'],
+      price: 40,
+    };
+    expect(() => staticSearch.add(newGym)).toThrow();
+  });
+
+  it('should throw error when removing from static index', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    expect(() => staticSearch.remove(testGyms[0]!)).toThrow();
+  });
+
+  it('should apply attribute filters in static mode', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    const results = staticSearch.where('rating', 'greaterThan', 4.0).execute();
+    expect(results.length).toBe(3);
+    results.forEach((r) => expect(r.rating).toBeGreaterThan(4.0));
+  });
+
+  it('should handle complex queries in static mode', () => {
+    const staticSearch = GeoSearch.from(testGyms, { static: true });
+    const results = staticSearch
+      .near(CALGARY_CENTER, 10)
+      .where('rating', 'greaterThan', 4.0)
+      .where('tags', 'includes', 'squat rack')
+      .sortBy([{ field: 'distance', order: 'asc' }])
+      .limit(5)
+      .execute();
+
+    expect(results.length).toBeLessThanOrEqual(5);
+    results.forEach((r) => {
+      expect(r.rating).toBeGreaterThan(4.0);
+      expect(r.tags).toContain('squat rack');
+      expect(r.distance).toBeDefined();
+    });
+  });
+});
+
+describe('caching', () => {
+  it('should create instance with caching enabled', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true });
+    expect(cachedSearch.cacheEnabled).toBe(true);
+    expect(cachedSearch.cacheSize).toBe(0);
+  });
+
+  it('should cache query results', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true });
+
+    // Execute the same query twice
+    cachedSearch.near(CALGARY_CENTER, 5).execute();
+    expect(cachedSearch.cacheSize).toBe(1);
+
+    cachedSearch.near(CALGARY_CENTER, 5).execute();
+    expect(cachedSearch.cacheSize).toBe(1); // Still 1, served from cache
+  });
+
+  it('should report cache hit in metadata', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true });
+
+    // First query - cache miss
+    const { metadata: meta1 } = cachedSearch
+      .near(CALGARY_CENTER, 5)
+      .executeWithMetadata();
+    expect(meta1.cached).toBe(false);
+
+    // Second query - cache hit
+    const { metadata: meta2 } = cachedSearch
+      .near(CALGARY_CENTER, 5)
+      .executeWithMetadata();
+    expect(meta2.cached).toBe(true);
+  });
+
+  it('should invalidate cache on data change', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true });
+
+    // Execute a query to populate cache
+    cachedSearch.near(CALGARY_CENTER, 5).execute();
+    expect(cachedSearch.cacheSize).toBe(1);
+
+    // Add an item - should invalidate cache
+    cachedSearch.add({
+      id: '6',
+      name: 'New Gym',
+      lat: 51.05,
+      lng: -114.07,
+      rating: 4.0,
+      tags: [],
+      price: 40,
+    });
+    expect(cachedSearch.cacheSize).toBe(0);
+  });
+
+  it('should not cache queries with scoring functions', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true });
+
+    // Query with scoring function - not cached
+    cachedSearch
+      .near(CALGARY_CENTER, 10)
+      .score((item) => item.rating * 10)
+      .execute();
+
+    expect(cachedSearch.cacheSize).toBe(0);
+  });
+
+  it('should clear cache manually', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true });
+
+    cachedSearch.near(CALGARY_CENTER, 5).execute();
+    cachedSearch.where('rating', 'greaterThan', 4.0).execute();
+    expect(cachedSearch.cacheSize).toBe(2);
+
+    cachedSearch.clearCache();
+    expect(cachedSearch.cacheSize).toBe(0);
+  });
+
+  it('should respect cache size limit', () => {
+    const cachedSearch = GeoSearch.from(testGyms, { cache: true, cacheSize: 2 });
+
+    // Fill cache with distinct queries
+    cachedSearch.where('rating', 'greaterThan', 3.0).execute();
+    cachedSearch.where('rating', 'greaterThan', 4.0).execute();
+    expect(cachedSearch.cacheSize).toBe(2);
+
+    // Add one more - should evict oldest
+    cachedSearch.where('rating', 'greaterThan', 4.5).execute();
+    expect(cachedSearch.cacheSize).toBe(2);
+  });
+
+  it('should work with static mode', () => {
+    const search = GeoSearch.from(testGyms, { static: true, cache: true });
+    expect(search.staticMode).toBe(true);
+    expect(search.cacheEnabled).toBe(true);
+
+    const { metadata: meta1 } = search.near(CALGARY_CENTER, 5).executeWithMetadata();
+    expect(meta1.cached).toBe(false);
+
+    const { metadata: meta2 } = search.near(CALGARY_CENTER, 5).executeWithMetadata();
+    expect(meta2.cached).toBe(true);
+  });
+});
+
 describe('haversineDistance', () => {
   it('should calculate correct distance', () => {
     // Calgary to Edmonton is approximately 299km

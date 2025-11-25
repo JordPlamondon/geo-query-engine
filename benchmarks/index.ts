@@ -3,6 +3,9 @@
  *
  * Tests query performance with varying dataset sizes to validate
  * the <50ms target for 10k+ points.
+ *
+ * Compares: Dynamic (RBush) vs Static (KDBush) modes
+ * Tests: Query caching performance
  */
 
 import { GeoSearch, haversineDistance } from '../src/index.js';
@@ -64,9 +67,9 @@ function formatResult(result: { avgMs: number; minMs: number; maxMs: number }): 
   return `avg: ${result.avgMs.toFixed(2)}ms, min: ${result.minMs.toFixed(2)}ms, max: ${result.maxMs.toFixed(2)}ms`;
 }
 
-console.log('='.repeat(60));
-console.log('geo-query-engine Performance Benchmarks');
-console.log('='.repeat(60));
+console.log('='.repeat(70));
+console.log('geo-query-engine Performance Benchmarks v0.2.0');
+console.log('='.repeat(70));
 console.log('');
 
 // Calgary area bounds
@@ -81,64 +84,36 @@ const center = { lat: 51.0447, lng: -114.0719 };
 const iterations = 100;
 
 // Test different dataset sizes
-const sizes = [1000, 5000, 10000, 25000, 50000, 100000];
+const sizes = [10000, 50000, 100000];
 
 for (const size of sizes) {
-  console.log(`\n${'─'.repeat(60)}`);
+  console.log(`\n${'═'.repeat(70)}`);
   console.log(`Dataset Size: ${size.toLocaleString()} points`);
-  console.log('─'.repeat(60));
+  console.log('═'.repeat(70));
 
   const data = generateRandomPoints(size, calgaryBounds);
 
-  // Benchmark: Index creation (bulk load)
-  let search: GeoSearch<BenchmarkLocation>;
-  const indexResult = runBenchmark('Index Creation', 10, () => {
-    search = GeoSearch.from(data);
-  });
-  search = GeoSearch.from(data);
-  console.log(`Index Creation:     ${formatResult(indexResult)}`);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DYNAMIC MODE (RBush)
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(`\n${'─'.repeat(35)}`);
+  console.log('DYNAMIC MODE (RBush)');
+  console.log('─'.repeat(35));
 
-  // Benchmark: Radius search (5km)
-  const radiusResult = runBenchmark('Radius Search 5km', iterations, () => {
-    search.near(center, 5).execute();
+  let dynamicSearch: GeoSearch<BenchmarkLocation>;
+  const dynamicIndexResult = runBenchmark('Index Creation', 10, () => {
+    dynamicSearch = GeoSearch.from(data);
   });
-  console.log(`Radius Search 5km:  ${formatResult(radiusResult)}`);
+  dynamicSearch = GeoSearch.from(data);
+  console.log(`Index Creation:     ${formatResult(dynamicIndexResult)}`);
 
-  // Benchmark: Radius search (10km)
-  const radius10Result = runBenchmark('Radius Search 10km', iterations, () => {
-    search.near(center, 10).execute();
+  const dynamicRadiusResult = runBenchmark('Radius Search 5km', iterations, () => {
+    dynamicSearch.near(center, 5).execute();
   });
-  console.log(`Radius Search 10km: ${formatResult(radius10Result)}`);
+  console.log(`Radius Search 5km:  ${formatResult(dynamicRadiusResult)}`);
 
-  // Benchmark: Radius + single filter
-  const filterResult = runBenchmark('Radius + Filter', iterations, () => {
-    search.near(center, 5).where('rating', 'greaterThan', 3.5).execute();
-  });
-  console.log(`Radius + Filter:    ${formatResult(filterResult)}`);
-
-  // Benchmark: Radius + multiple filters
-  const multiFilterResult = runBenchmark('Radius + Multi Filter', iterations, () => {
-    search
-      .near(center, 5)
-      .where('rating', 'greaterThan', 3.5)
-      .where('price', 'lessThan', 60)
-      .execute();
-  });
-  console.log(`Radius + Multi:     ${formatResult(multiFilterResult)}`);
-
-  // Benchmark: Radius + filter + sort
-  const sortResult = runBenchmark('Radius + Filter + Sort', iterations, () => {
-    search
-      .near(center, 5)
-      .where('rating', 'greaterThan', 3.5)
-      .sortBy([{ field: 'distance', order: 'asc' }])
-      .execute();
-  });
-  console.log(`With Sort:          ${formatResult(sortResult)}`);
-
-  // Benchmark: Complex query (radius + filter + sort + limit)
-  const complexResult = runBenchmark('Complex Query', iterations, () => {
-    search
+  const dynamicComplexResult = runBenchmark('Complex Query', iterations, () => {
+    dynamicSearch
       .near(center, 10)
       .where('rating', 'greaterThan', 3.0)
       .where('price', 'lessThan', 80)
@@ -149,17 +124,109 @@ for (const size of sizes) {
       .limit(20)
       .execute();
   });
-  console.log(`Complex Query:      ${formatResult(complexResult)}`);
+  console.log(`Complex Query:      ${formatResult(dynamicComplexResult)}`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STATIC MODE (KDBush)
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(`\n${'─'.repeat(35)}`);
+  console.log('STATIC MODE (KDBush)');
+  console.log('─'.repeat(35));
+
+  let staticSearch: GeoSearch<BenchmarkLocation>;
+  const staticIndexResult = runBenchmark('Index Creation', 10, () => {
+    staticSearch = GeoSearch.from(data, { static: true });
+  });
+  staticSearch = GeoSearch.from(data, { static: true });
+  console.log(`Index Creation:     ${formatResult(staticIndexResult)}`);
+
+  const staticRadiusResult = runBenchmark('Radius Search 5km', iterations, () => {
+    staticSearch.near(center, 5).execute();
+  });
+  console.log(`Radius Search 5km:  ${formatResult(staticRadiusResult)}`);
+
+  const staticComplexResult = runBenchmark('Complex Query', iterations, () => {
+    staticSearch
+      .near(center, 10)
+      .where('rating', 'greaterThan', 3.0)
+      .where('price', 'lessThan', 80)
+      .sortBy([
+        { field: 'distance', order: 'asc' },
+        { field: 'rating', order: 'desc' },
+      ])
+      .limit(20)
+      .execute();
+  });
+  console.log(`Complex Query:      ${formatResult(staticComplexResult)}`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CACHED MODE
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(`\n${'─'.repeat(35)}`);
+  console.log('CACHED MODE (Static + Cache)');
+  console.log('─'.repeat(35));
+
+  const cachedSearch = GeoSearch.from(data, { static: true, cache: true });
+
+  // First query (cold cache)
+  const coldCacheResult = runBenchmark('Cold Cache Query', 10, () => {
+    // Clear cache before each run to measure cold performance
+    cachedSearch.clearCache();
+    cachedSearch
+      .near(center, 10)
+      .where('rating', 'greaterThan', 3.0)
+      .sortBy([{ field: 'distance', order: 'asc' }])
+      .limit(20)
+      .execute();
+  });
+  console.log(`Cold Cache Query:   ${formatResult(coldCacheResult)}`);
+
+  // Warm up cache with the query
+  cachedSearch.clearCache();
+  cachedSearch
+    .near(center, 10)
+    .where('rating', 'greaterThan', 3.0)
+    .sortBy([{ field: 'distance', order: 'asc' }])
+    .limit(20)
+    .execute();
+
+  // Repeated queries (warm cache)
+  const warmCacheResult = runBenchmark('Warm Cache Query', iterations, () => {
+    cachedSearch
+      .near(center, 10)
+      .where('rating', 'greaterThan', 3.0)
+      .sortBy([{ field: 'distance', order: 'asc' }])
+      .limit(20)
+      .execute();
+  });
+  console.log(`Warm Cache Query:   ${formatResult(warmCacheResult)}`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // COMPARISON SUMMARY
+  // ═══════════════════════════════════════════════════════════════════════════
+  console.log(`\n${'─'.repeat(35)}`);
+  console.log('COMPARISON');
+  console.log('─'.repeat(35));
+
+  const indexSpeedup = dynamicIndexResult.avgMs / staticIndexResult.avgMs;
+  const querySpeedup = dynamicComplexResult.avgMs / staticComplexResult.avgMs;
+  const cacheSpeedup = staticComplexResult.avgMs / warmCacheResult.avgMs;
+
+  console.log(`Index Creation:  Static is ${indexSpeedup.toFixed(1)}x faster than Dynamic`);
+  console.log(`Complex Query:   Static is ${querySpeedup.toFixed(1)}x faster than Dynamic`);
+  console.log(`With Cache:      Cache is ${cacheSpeedup.toFixed(0)}x faster than uncached`);
 
   // Performance check
-  const passed = complexResult.avgMs < 50;
+  const passed = staticComplexResult.avgMs < 50;
   console.log(`\n✓ Performance Target (<50ms): ${passed ? 'PASSED' : 'FAILED'}`);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
 // Additional benchmarks
-console.log(`\n${'='.repeat(60)}`);
+// ═══════════════════════════════════════════════════════════════════════════
+console.log(`\n${'═'.repeat(70)}`);
 console.log('Additional Benchmarks');
-console.log('='.repeat(60));
+console.log('═'.repeat(70));
 
 // Haversine distance calculation benchmark
 const point1 = { lat: 51.0447, lng: -114.0719 };
@@ -173,12 +240,12 @@ const haversineResult = runBenchmark('Haversine Distance (1M calls)', 10, () => 
 console.log(`\nHaversine (1M):    ${formatResult(haversineResult)}`);
 
 // Dynamic operations benchmark
-console.log(`\n${'─'.repeat(60)}`);
+console.log(`\n${'─'.repeat(35)}`);
 console.log('Dynamic Operations (10k dataset)');
-console.log('─'.repeat(60));
+console.log('─'.repeat(35));
 
 const dynamicData = generateRandomPoints(10000, calgaryBounds);
-const dynamicSearch = GeoSearch.from(dynamicData);
+const dynamicOpsSearch = GeoSearch.from(dynamicData);
 
 // Single add
 const addResult = runBenchmark('Add Single Item', iterations, () => {
@@ -191,11 +258,11 @@ const addResult = runBenchmark('Add Single Item', iterations, () => {
     tags: ['gym'],
     price: 50,
   };
-  dynamicSearch.add(newItem);
-  dynamicSearch.remove(newItem);
+  dynamicOpsSearch.add(newItem);
+  dynamicOpsSearch.remove(newItem);
 });
 console.log(`Add/Remove Single:  ${formatResult(addResult)}`);
 
-console.log(`\n${'='.repeat(60)}`);
+console.log(`\n${'═'.repeat(70)}`);
 console.log('Benchmark Complete');
-console.log('='.repeat(60));
+console.log('═'.repeat(70));

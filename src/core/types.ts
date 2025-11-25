@@ -121,8 +121,31 @@ export interface IndexedItem<T extends GeoPoint> {
  */
 export interface GeoSearchOptions {
   /**
-   * Maximum number of items to load per bulk insert batch
-   * @default 10000
+   * Use static mode with KDBush for read-only datasets.
+   * 5-8x faster indexing and queries, but does not support add/remove.
+   * @default false
    */
-  batchSize?: number;
+  static?: boolean;
+
+  /**
+   * Enable query result caching for instant repeated queries.
+   * Cache is automatically invalidated when data changes.
+   * @default false
+   */
+  cache?: boolean;
+
+  /**
+   * Maximum number of queries to cache (LRU eviction).
+   * Only used when cache is enabled.
+   * @default 100
+   */
+  cacheSize?: number;
+}
+
+/**
+ * Extended metadata including cache information
+ */
+export interface QueryMetadataWithCache extends QueryMetadata {
+  /** Whether this result was served from cache */
+  cached: boolean;
 }

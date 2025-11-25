@@ -1,6 +1,6 @@
 {
   "name": "geo-query-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A high-performance client-side geospatial search and filtering engine for location-based applications",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -69,6 +69,8 @@
     "vitest": "^2.0.0"
   },
   "dependencies": {
+    "geokdbush": "^2.0.1",
+    "kdbush": "^4.0.2",
     "rbush": "^3.0.1"
   },
   "engines": {

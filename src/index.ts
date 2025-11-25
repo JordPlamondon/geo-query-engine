@@ -23,6 +23,7 @@ export type {
   BoundingBox,
   QueryState,
   QueryMetadata,
+  QueryMetadataWithCache,
   QueryResult,
   GeoSearchOptions,
 } from './core/types.js';

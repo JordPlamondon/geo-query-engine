@@ -6,9 +6,12 @@ import type {
   FilterOperator,
   BoundingBox,
   WithDistance,
+  QueryMetadataWithCache,
 } from './types.js';
-import { SpatialIndex } from '../spatial/index.js';
+import type { ISpatialIndex } from '../spatial/index.js';
 import { evaluateFilter } from '../filters/index.js';
+import type { LRUCache } from '../utils/LRUCache.js';
+import { generateCacheKey } from '../utils/LRUCache.js';
 
 /**
  * Immutable query builder for geographic searches
@@ -20,11 +23,17 @@ import { evaluateFilter } from '../filters/index.js';
  * @template HasDistance - Whether distance has been computed (via .near())
  */
 export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = false> {
-  private readonly spatialIndex: SpatialIndex<T>;
+  private readonly spatialIndex: ISpatialIndex<T>;
   private readonly state: QueryState<T>;
+  private readonly cache: LRUCache<string, unknown> | null;
 
-  constructor(spatialIndex: SpatialIndex<T>, state?: Partial<QueryState<T>>) {
+  constructor(
+    spatialIndex: ISpatialIndex<T>,
+    state?: Partial<QueryState<T>>,
+    cache?: LRUCache<string, unknown> | null
+  ) {
     this.spatialIndex = spatialIndex;
+    this.cache = cache ?? null;
     this.state = {
       attributeFilters: [],
       sortCriteria: [],
@@ -39,10 +48,31 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
   private clone<NewHasDistance extends boolean = HasDistance>(
     updates: Partial<QueryState<T>>
   ): QueryBuilder<T, NewHasDistance> {
-    return new QueryBuilder<T, NewHasDistance>(this.spatialIndex, {
-      ...this.state,
-      ...updates,
-    });
+    return new QueryBuilder<T, NewHasDistance>(
+      this.spatialIndex,
+      {
+        ...this.state,
+        ...updates,
+      },
+      this.cache
+    );
+  }
+
+  /**
+   * Generates a cache key for the current query state
+   */
+  private getCacheKey(): string {
+    // Create a serializable version of the state (excluding functions)
+    const cacheableState = {
+      radiusFilter: this.state.radiusFilter,
+      boundsFilter: this.state.boundsFilter,
+      attributeFilters: this.state.attributeFilters,
+      sortCriteria: this.state.sortCriteria,
+      limitCount: this.state.limitCount,
+      offsetCount: this.state.offsetCount,
+      // Note: scoreFunction is not cacheable
+    };
+    return generateCacheKey(cacheableState);
   }
 
   /**
@@ -112,6 +142,7 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
 
   /**
    * Sets a custom scoring function for results
+   * Note: Queries with scoring functions are not cached
    *
    * @param fn - Scoring function that takes item and optional distance
    * @returns New QueryBuilder with scoring function
@@ -147,11 +178,9 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
   }
 
   /**
-   * Executes the query and returns results
-   *
-   * @returns Array of items matching the query criteria
+   * Internal method to execute the query without caching
    */
-  execute(): HasDistance extends true ? WithDistance<T>[] : T[] {
+  private executeInternal(): HasDistance extends true ? WithDistance<T>[] : T[] {
     // Step 1: Get initial candidates based on geographic filters
     let candidates: Array<{ item: T; distance?: number }>;
 
@@ -236,19 +265,63 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
   }
 
   /**
+   * Executes the query and returns results
+   * Results are cached if caching is enabled and no scoring function is used
+   *
+   * @returns Array of items matching the query criteria
+   */
+  execute(): HasDistance extends true ? WithDistance<T>[] : T[] {
+    // Don't cache if scoring function is used (not serializable)
+    const canCache = this.cache && !this.state.scoreFunction;
+
+    if (canCache) {
+      const cacheKey = this.getCacheKey();
+      const cached = this.cache!.get(cacheKey);
+      if (cached !== undefined) {
+        return cached as HasDistance extends true ? WithDistance<T>[] : T[];
+      }
+
+      const results = this.executeInternal();
+      this.cache!.set(cacheKey, results);
+      return results;
+    }
+
+    return this.executeInternal();
+  }
+
+  /**
    * Executes the query and returns results with metadata
+   * Includes cache hit information when caching is enabled
    *
    * @returns Query result with items and metadata
    */
   executeWithMetadata(): {
     items: HasDistance extends true ? WithDistance<T>[] : T[];
-    metadata: {
-      totalMatches: number;
-      returnedCount: number;
-      queryTimeMs: number;
-    };
+    metadata: QueryMetadataWithCache;
   } {
     const startTime = performance.now();
+    const canCache = this.cache && !this.state.scoreFunction;
+    let cached = false;
+
+    // Check cache first
+    if (canCache) {
+      const cacheKey = this.getCacheKey();
+      const cachedResult = this.cache!.get(cacheKey);
+      if (cachedResult !== undefined) {
+        cached = true;
+        const queryTimeMs = performance.now() - startTime;
+        const items = cachedResult as HasDistance extends true ? WithDistance<T>[] : T[];
+        return {
+          items,
+          metadata: {
+            totalMatches: items.length, // Note: This is approximate for cached results with limits
+            returnedCount: items.length,
+            queryTimeMs,
+            cached: true,
+          },
+        };
+      }
+    }
 
     // Get candidates for counting total matches
     let totalCandidates: Array<{ item: T; distance?: number }>;
@@ -277,7 +350,13 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     const totalMatches = totalFiltered.length;
 
     // Execute the query with limits
-    const items = this.execute();
+    const items = this.executeInternal();
+
+    // Cache the result
+    if (canCache) {
+      const cacheKey = this.getCacheKey();
+      this.cache!.set(cacheKey, items);
+    }
 
     const queryTimeMs = performance.now() - startTime;
 
@@ -287,6 +366,7 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
         totalMatches,
         returnedCount: items.length,
         queryTimeMs,
+        cached,
       },
     };
   }
