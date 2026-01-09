@@ -1,13 +1,3 @@
-/**
- * Performance benchmarks for geo-query-engine
- *
- * Tests query performance with varying dataset sizes to validate
- * the <50ms target for 10k+ points.
- *
- * Compares: Dynamic (RBush) vs Static (KDBush) modes
- * Tests: Query caching performance
- */
-
 import { GeoSearch, haversineDistance } from '../src/index.js';
 import type { GeoPoint } from '../src/index.js';
 
@@ -19,7 +9,6 @@ interface BenchmarkLocation extends GeoPoint {
   price: number;
 }
 
-// Generate random points within a bounding box
 function generateRandomPoints(count: number, bounds: {
   minLat: number;
   maxLat: number;
@@ -33,22 +22,19 @@ function generateRandomPoints(count: number, bounds: {
     name: `Location ${i}`,
     lat: bounds.minLat + Math.random() * (bounds.maxLat - bounds.minLat),
     lng: bounds.minLng + Math.random() * (bounds.maxLng - bounds.minLng),
-    rating: 1 + Math.random() * 4, // 1-5
-    price: 20 + Math.random() * 80, // 20-100
-    tags: tags.filter(() => Math.random() > 0.6), // Random subset of tags
+    rating: 1 + Math.random() * 4,
+    price: 20 + Math.random() * 80,
+    tags: tags.filter(() => Math.random() > 0.6),
   }));
 }
 
-// Benchmark runner
 function runBenchmark(name: string, iterations: number, fn: () => void): { avgMs: number; minMs: number; maxMs: number } {
   const times: number[] = [];
 
-  // Warmup
   for (let i = 0; i < 3; i++) {
     fn();
   }
 
-  // Actual benchmark
   for (let i = 0; i < iterations; i++) {
     const start = performance.now();
     fn();
@@ -72,7 +58,6 @@ console.log('geo-query-engine Performance Benchmarks v0.2.0');
 console.log('='.repeat(70));
 console.log('');
 
-// Calgary area bounds
 const calgaryBounds = {
   minLat: 50.85,
   maxLat: 51.20,
@@ -83,7 +68,6 @@ const calgaryBounds = {
 const center = { lat: 51.0447, lng: -114.0719 };
 const iterations = 100;
 
-// Test different dataset sizes
 const sizes = [10000, 50000, 100000];
 
 for (const size of sizes) {
@@ -93,9 +77,6 @@ for (const size of sizes) {
 
   const data = generateRandomPoints(size, calgaryBounds);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // DYNAMIC MODE (RBush)
-  // ═══════════════════════════════════════════════════════════════════════════
   console.log(`\n${'─'.repeat(35)}`);
   console.log('DYNAMIC MODE (RBush)');
   console.log('─'.repeat(35));
@@ -126,9 +107,6 @@ for (const size of sizes) {
   });
   console.log(`Complex Query:      ${formatResult(dynamicComplexResult)}`);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STATIC MODE (KDBush)
-  // ═══════════════════════════════════════════════════════════════════════════
   console.log(`\n${'─'.repeat(35)}`);
   console.log('STATIC MODE (KDBush)');
   console.log('─'.repeat(35));
@@ -159,18 +137,13 @@ for (const size of sizes) {
   });
   console.log(`Complex Query:      ${formatResult(staticComplexResult)}`);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CACHED MODE
-  // ═══════════════════════════════════════════════════════════════════════════
   console.log(`\n${'─'.repeat(35)}`);
   console.log('CACHED MODE (Static + Cache)');
   console.log('─'.repeat(35));
 
   const cachedSearch = GeoSearch.from(data, { static: true, cache: true });
 
-  // First query (cold cache)
   const coldCacheResult = runBenchmark('Cold Cache Query', 10, () => {
-    // Clear cache before each run to measure cold performance
     cachedSearch.clearCache();
     cachedSearch
       .near(center, 10)
@@ -181,7 +154,6 @@ for (const size of sizes) {
   });
   console.log(`Cold Cache Query:   ${formatResult(coldCacheResult)}`);
 
-  // Warm up cache with the query
   cachedSearch.clearCache();
   cachedSearch
     .near(center, 10)
@@ -190,7 +162,6 @@ for (const size of sizes) {
     .limit(20)
     .execute();
 
-  // Repeated queries (warm cache)
   const warmCacheResult = runBenchmark('Warm Cache Query', iterations, () => {
     cachedSearch
       .near(center, 10)
@@ -201,9 +172,6 @@ for (const size of sizes) {
   });
   console.log(`Warm Cache Query:   ${formatResult(warmCacheResult)}`);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // COMPARISON SUMMARY
-  // ═══════════════════════════════════════════════════════════════════════════
   console.log(`\n${'─'.repeat(35)}`);
   console.log('COMPARISON');
   console.log('─'.repeat(35));
@@ -216,19 +184,14 @@ for (const size of sizes) {
   console.log(`Complex Query:   Static is ${querySpeedup.toFixed(1)}x faster than Dynamic`);
   console.log(`With Cache:      Cache is ${cacheSpeedup.toFixed(0)}x faster than uncached`);
 
-  // Performance check
   const passed = staticComplexResult.avgMs < 50;
-  console.log(`\n✓ Performance Target (<50ms): ${passed ? 'PASSED' : 'FAILED'}`);
+  console.log(`\nPerformance Target (<50ms): ${passed ? 'PASSED' : 'FAILED'}`);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Additional benchmarks
-// ═══════════════════════════════════════════════════════════════════════════
 console.log(`\n${'═'.repeat(70)}`);
 console.log('Additional Benchmarks');
 console.log('═'.repeat(70));
 
-// Haversine distance calculation benchmark
 const point1 = { lat: 51.0447, lng: -114.0719 };
 const point2 = { lat: 53.5461, lng: -113.4938 };
 
@@ -239,7 +202,6 @@ const haversineResult = runBenchmark('Haversine Distance (1M calls)', 10, () => 
 });
 console.log(`\nHaversine (1M):    ${formatResult(haversineResult)}`);
 
-// Dynamic operations benchmark
 console.log(`\n${'─'.repeat(35)}`);
 console.log('Dynamic Operations (10k dataset)');
 console.log('─'.repeat(35));
@@ -247,7 +209,6 @@ console.log('─'.repeat(35));
 const dynamicData = generateRandomPoints(10000, calgaryBounds);
 const dynamicOpsSearch = GeoSearch.from(dynamicData);
 
-// Single add
 const addResult = runBenchmark('Add Single Item', iterations, () => {
   const newItem: BenchmarkLocation = {
     id: 'new-item',

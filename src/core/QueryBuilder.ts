@@ -13,15 +13,8 @@ import { evaluateFilter } from '../filters/index.js';
 import type { LRUCache } from '../utils/LRUCache.js';
 import { generateCacheKey } from '../utils/LRUCache.js';
 
-/**
- * Immutable query builder for geographic searches
- *
- * Each method returns a new QueryBuilder instance, preserving immutability
- * and enabling type-safe method chaining.
- *
- * @template T - The type of geographic point being queried
- * @template HasDistance - Whether distance has been computed (via .near())
- */
+// Immutable query builder - each method returns a new instance.
+// This enables safe query reuse: baseQuery.where(...) doesn't mutate baseQuery
 export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = false> {
   private readonly spatialIndex: ISpatialIndex<T>;
   private readonly state: QueryState<T>;
@@ -42,9 +35,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     };
   }
 
-  /**
-   * Creates a new QueryBuilder with updated state (immutable)
-   */
   private clone<NewHasDistance extends boolean = HasDistance>(
     updates: Partial<QueryState<T>>
   ): QueryBuilder<T, NewHasDistance> {
@@ -58,11 +48,8 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     );
   }
 
-  /**
-   * Generates a cache key for the current query state
-   */
   private getCacheKey(): string {
-    // Create a serializable version of the state (excluding functions)
+    // Only cache serializable state - functions can't be reliably hashed
     const cacheableState = {
       radiusFilter: this.state.radiusFilter,
       boundsFilter: this.state.boundsFilter,
@@ -70,44 +57,22 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       sortCriteria: this.state.sortCriteria,
       limitCount: this.state.limitCount,
       offsetCount: this.state.offsetCount,
-      // Note: scoreFunction is not cacheable
     };
     return generateCacheKey(cacheableState);
   }
 
-  /**
-   * Filters points within a radius of a center point
-   *
-   * @param center - Center point for the search
-   * @param radiusKm - Maximum distance in kilometers
-   * @returns New QueryBuilder with distance field available
-   */
   near(center: GeoPoint, radiusKm: number): QueryBuilder<T, true> {
     return this.clone<true>({
       radiusFilter: { center, radiusKm },
     });
   }
 
-  /**
-   * Filters points within a bounding box
-   *
-   * @param bounds - Bounding box to filter within
-   * @returns New QueryBuilder
-   */
   withinBounds(bounds: BoundingBox): QueryBuilder<T, HasDistance> {
     return this.clone({
       boundsFilter: bounds,
     });
   }
 
-  /**
-   * Adds an attribute filter condition
-   *
-   * @param field - Field name to filter on
-   * @param operator - Filter operator
-   * @param value - Value to compare against
-   * @returns New QueryBuilder with added filter
-   */
   where<K extends keyof T>(
     field: K,
     operator: FilterOperator,
@@ -124,12 +89,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     });
   }
 
-  /**
-   * Sets sorting criteria for results
-   *
-   * @param criteria - Array of sort criteria
-   * @returns New QueryBuilder with sorting applied
-   */
   sortBy(
     criteria: HasDistance extends true
       ? SortCriteria<T & { distance: number }>[]
@@ -140,67 +99,44 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     });
   }
 
-  /**
-   * Sets a custom scoring function for results
-   * Note: Queries with scoring functions are not cached
-   *
-   * @param fn - Scoring function that takes item and optional distance
-   * @returns New QueryBuilder with scoring function
-   */
   score(fn: (item: T, distance?: number) => number): QueryBuilder<T, HasDistance> {
     return this.clone({
       scoreFunction: fn,
     });
   }
 
-  /**
-   * Limits the number of results returned
-   *
-   * @param count - Maximum number of results
-   * @returns New QueryBuilder with limit applied
-   */
   limit(count: number): QueryBuilder<T, HasDistance> {
     return this.clone({
       limitCount: count,
     });
   }
 
-  /**
-   * Skips a number of results (for pagination)
-   *
-   * @param count - Number of results to skip
-   * @returns New QueryBuilder with offset applied
-   */
   offset(count: number): QueryBuilder<T, HasDistance> {
     return this.clone({
       offsetCount: count,
     });
   }
 
-  /**
-   * Internal method to execute the query without caching
-   */
   private executeInternal(): HasDistance extends true ? WithDistance<T>[] : T[] {
-    // Step 1: Get initial candidates based on geographic filters
     let candidates: Array<{ item: T; distance?: number }>;
 
+    // Spatial filter first - uses R-tree/KD-tree to narrow candidates quickly
+    // before expensive attribute filtering
     if (this.state.radiusFilter) {
-      // Use radius search which returns items with distances
       candidates = this.spatialIndex.searchRadius(
         this.state.radiusFilter.center,
         this.state.radiusFilter.radiusKm
       );
     } else if (this.state.boundsFilter) {
-      // Use bounds search
       const items = this.spatialIndex.searchBounds(this.state.boundsFilter);
       candidates = items.map((item) => ({ item }));
     } else {
-      // No geographic filter - return all items
       const items = this.spatialIndex.all();
       candidates = items.map((item) => ({ item }));
     }
 
-    // Step 2: Apply attribute filters
+    // Attribute filters applied sequentially - each filter reduces the set
+    // for the next, so order can affect performance on large datasets
     let filtered = candidates;
     for (const filter of this.state.attributeFilters) {
       filtered = filtered.filter((candidate) =>
@@ -208,7 +144,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       );
     }
 
-    // Step 3: Compute scores if scoring function is provided
     if (this.state.scoreFunction) {
       filtered = filtered.map((candidate) => ({
         ...candidate,
@@ -216,7 +151,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       }));
     }
 
-    // Step 4: Apply sorting
     if (this.state.sortCriteria.length > 0) {
       filtered.sort((a, b) => {
         for (const criterion of this.state.sortCriteria) {
@@ -244,7 +178,7 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       });
     }
 
-    // Step 5: Apply offset and limit
+    // Offset/limit applied after sorting - pagination requires stable order
     let results = filtered;
     if (this.state.offsetCount > 0) {
       results = results.slice(this.state.offsetCount);
@@ -253,7 +187,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       results = results.slice(0, this.state.limitCount);
     }
 
-    // Step 6: Format results
     const formattedResults = results.map((candidate) => {
       if (this.state.radiusFilter && candidate.distance !== undefined) {
         return { ...candidate.item, distance: candidate.distance };
@@ -264,14 +197,9 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     return formattedResults as HasDistance extends true ? WithDistance<T>[] : T[];
   }
 
-  /**
-   * Executes the query and returns results
-   * Results are cached if caching is enabled and no scoring function is used
-   *
-   * @returns Array of items matching the query criteria
-   */
   execute(): HasDistance extends true ? WithDistance<T>[] : T[] {
-    // Don't cache if scoring function is used (not serializable)
+    // Skip cache for queries with score functions - they're not serializable
+    // and likely unique per invocation anyway
     const canCache = this.cache && !this.state.scoreFunction;
 
     if (canCache) {
@@ -289,12 +217,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     return this.executeInternal();
   }
 
-  /**
-   * Executes the query and returns results with metadata
-   * Includes cache hit information when caching is enabled
-   *
-   * @returns Query result with items and metadata
-   */
   executeWithMetadata(): {
     items: HasDistance extends true ? WithDistance<T>[] : T[];
     metadata: QueryMetadataWithCache;
@@ -303,7 +225,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     const canCache = this.cache && !this.state.scoreFunction;
     let cached = false;
 
-    // Check cache first
     if (canCache) {
       const cacheKey = this.getCacheKey();
       const cachedResult = this.cache!.get(cacheKey);
@@ -314,7 +235,7 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
         return {
           items,
           metadata: {
-            totalMatches: items.length, // Note: This is approximate for cached results with limits
+            totalMatches: items.length,
             returnedCount: items.length,
             queryTimeMs,
             cached: true,
@@ -323,7 +244,7 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       }
     }
 
-    // Get candidates for counting total matches
+    // Count total matches before limit/offset for pagination info
     let totalCandidates: Array<{ item: T; distance?: number }>;
 
     if (this.state.radiusFilter) {
@@ -339,7 +260,6 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
       totalCandidates = items.map((item) => ({ item }));
     }
 
-    // Apply attribute filters to get total matches
     let totalFiltered = totalCandidates;
     for (const filter of this.state.attributeFilters) {
       totalFiltered = totalFiltered.filter((candidate) =>
@@ -348,11 +268,8 @@ export class QueryBuilder<T extends GeoPoint, HasDistance extends boolean = fals
     }
 
     const totalMatches = totalFiltered.length;
-
-    // Execute the query with limits
     const items = this.executeInternal();
 
-    // Cache the result
     if (canCache) {
       const cacheKey = this.getCacheKey();
       this.cache!.set(cacheKey, items);

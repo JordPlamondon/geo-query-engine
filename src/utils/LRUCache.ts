@@ -1,8 +1,6 @@
-/**
- * Simple LRU (Least Recently Used) cache implementation
- *
- * Used to cache query results for instant repeated queries.
- */
+// Simple LRU cache using Map's insertion order guarantee.
+// When we access an item, we delete and re-insert to move it to the end.
+// The first item is always the oldest (least recently used).
 export class LRUCache<K, V> {
   private cache: Map<K, V>;
   private readonly maxSize: number;
@@ -12,10 +10,6 @@ export class LRUCache<K, V> {
     this.maxSize = maxSize;
   }
 
-  /**
-   * Get a value from the cache
-   * Moves the item to the end (most recently used)
-   */
   get(key: K): V | undefined {
     const value = this.cache.get(key);
     if (value !== undefined) {
@@ -26,17 +20,12 @@ export class LRUCache<K, V> {
     return value;
   }
 
-  /**
-   * Set a value in the cache
-   * Evicts the least recently used item if at capacity
-   */
   set(key: K, value: V): void {
-    // Delete existing to update position
     if (this.cache.has(key)) {
       this.cache.delete(key);
     }
 
-    // Evict oldest if at capacity
+    // Evict oldest entry if at capacity
     if (this.cache.size >= this.maxSize) {
       const oldestKey = this.cache.keys().next().value;
       if (oldestKey !== undefined) {
@@ -47,31 +36,21 @@ export class LRUCache<K, V> {
     this.cache.set(key, value);
   }
 
-  /**
-   * Check if a key exists in the cache
-   */
   has(key: K): boolean {
     return this.cache.has(key);
   }
 
-  /**
-   * Clear all entries from the cache
-   */
   clear(): void {
     this.cache.clear();
   }
 
-  /**
-   * Get the current size of the cache
-   */
   get size(): number {
     return this.cache.size;
   }
 }
 
-/**
- * Recursively sorts object keys for consistent serialization
- */
+// Sort object keys recursively for deterministic JSON serialization.
+// Without this, {a:1, b:2} and {b:2, a:1} would produce different cache keys.
 function sortObjectKeys(obj: unknown): unknown {
   if (obj === null || typeof obj !== 'object') {
     return obj;
@@ -86,10 +65,6 @@ function sortObjectKeys(obj: unknown): unknown {
   return sorted;
 }
 
-/**
- * Generates a cache key from query state
- * Used to identify unique queries for caching
- */
 export function generateCacheKey(state: Record<string, unknown>): string {
   return JSON.stringify(sortObjectKeys(state));
 }

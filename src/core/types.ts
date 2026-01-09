@@ -1,23 +1,10 @@
-/**
- * Core type definitions for geo-query-engine
- */
-
-/**
- * Base interface for any geographic point with latitude and longitude
- */
 export interface GeoPoint {
   lat: number;
   lng: number;
 }
 
-/**
- * A geographic point with distance from a reference point
- */
 export type WithDistance<T> = T & { distance: number };
 
-/**
- * Filter operators for attribute filtering
- */
 export type FilterOperator =
   | 'equals'
   | 'notEquals'
@@ -35,39 +22,24 @@ export type FilterOperator =
   | 'in'
   | 'notIn';
 
-/**
- * Sort order direction
- */
 export type SortOrder = 'asc' | 'desc';
 
-/**
- * Sort criteria for ordering results
- */
 export interface SortCriteria<T> {
   field: keyof T | 'distance';
   order: SortOrder;
 }
 
-/**
- * Filter condition for attribute filtering
- */
 export interface FilterCondition<T> {
   field: keyof T;
   operator: FilterOperator;
   value: unknown;
 }
 
-/**
- * Geographic filter for radius-based searches
- */
 export interface RadiusFilter {
   center: GeoPoint;
   radiusKm: number;
 }
 
-/**
- * Bounding box for geographic queries
- */
 export interface BoundingBox {
   minLat: number;
   maxLat: number;
@@ -75,9 +47,6 @@ export interface BoundingBox {
   maxLng: number;
 }
 
-/**
- * Query state that accumulates through the fluent API chain
- */
 export interface QueryState<T extends GeoPoint> {
   radiusFilter?: RadiusFilter;
   boundsFilter?: BoundingBox;
@@ -88,26 +57,17 @@ export interface QueryState<T extends GeoPoint> {
   offsetCount: number;
 }
 
-/**
- * Result metadata returned with query results
- */
 export interface QueryMetadata {
   totalMatches: number;
   returnedCount: number;
   queryTimeMs: number;
 }
 
-/**
- * Query result containing items and metadata
- */
 export interface QueryResult<T> {
   items: T[];
   metadata: QueryMetadata;
 }
 
-/**
- * Internal item representation for rbush spatial index
- */
 export interface IndexedItem<T extends GeoPoint> {
   minX: number;
   minY: number;
@@ -116,36 +76,15 @@ export interface IndexedItem<T extends GeoPoint> {
   item: T;
 }
 
-/**
- * Configuration options for GeoSearch
- */
 export interface GeoSearchOptions {
-  /**
-   * Use static mode with KDBush for read-only datasets.
-   * 5-8x faster indexing and queries, but does not support add/remove.
-   * @default false
-   */
+  /** Use static mode (KDBush) for read-only datasets. Faster but no add/remove. */
   static?: boolean;
-
-  /**
-   * Enable query result caching for instant repeated queries.
-   * Cache is automatically invalidated when data changes.
-   * @default false
-   */
+  /** Enable LRU query caching. */
   cache?: boolean;
-
-  /**
-   * Maximum number of queries to cache (LRU eviction).
-   * Only used when cache is enabled.
-   * @default 100
-   */
+  /** Max cached queries (default: 100). */
   cacheSize?: number;
 }
 
-/**
- * Extended metadata including cache information
- */
 export interface QueryMetadataWithCache extends QueryMetadata {
-  /** Whether this result was served from cache */
   cached: boolean;
 }
